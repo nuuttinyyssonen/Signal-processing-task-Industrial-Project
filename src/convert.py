@@ -9,7 +9,6 @@ import pandas as pd
 
 SAMPLE_RATE = 50_000
 
-
 def convert_csv(csv_path, out_dir, chunk_rows=5_000_000, sample_rate=SAMPLE_RATE):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
