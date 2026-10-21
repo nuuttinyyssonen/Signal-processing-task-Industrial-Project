@@ -38,3 +38,18 @@ def test_get_samples_in_range_clamps_to_signal_bounds(tmp_path):
 
     assert samples.shape == signal.shape
     assert np.array_equal(samples, signal)
+
+
+def test_get_samples_in_range_reads_float32_signal(tmp_path):
+    signal = np.arange(20, dtype=np.float32).reshape(-1, 2)
+    out_dir = tmp_path / "smoothed"
+    out_dir.mkdir()
+
+    signal_path = out_dir / "signal.f32"
+    signal.tofile(signal_path)
+    meta = {"sample_rate": 10, "channels": ["adc1", "adc2"], "dtype": "float32"}
+    (out_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    samples = get_samples_in_range(signal_path, 0.2, 0.5)
+
+    assert np.array_equal(samples, signal[2:5])
