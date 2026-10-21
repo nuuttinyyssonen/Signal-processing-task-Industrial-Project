@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from check import get_samples_in_range
-from smooth import smooth_gaussian
+from smooth import smooth_gaussian, smooth_median
 
 ROOT = Path(__file__).resolve().parents[1]
 SIGNAL = ROOT / "data" / "example_out" / "signal.u16"
@@ -21,12 +21,14 @@ DURATION_S = 0.05
 QUIET_START_S = 2.0
 QUIET_DURATION_S = 1.0
 GAUSS_SIGMA_S = 2 / FS       # 2 samples: 40 us at 50 kHz
+MEDIAN_WINDOW_S = 5 / FS     # 5 samples: 0.1 ms at 50 kHz
 
 
 def smoothing_versions(signal):
     return {
         "raw": signal,
         "gaussian": smooth_gaussian(signal, GAUSS_SIGMA_S, FS),
+        "median": smooth_median(signal, MEDIAN_WINDOW_S, FS),
     }
 
 
@@ -46,6 +48,7 @@ for channel_index, (axis, channel_name) in enumerate(zip(axes, CHANNELS)):
     versions = smoothing_versions(raw)
     axis.plot(times, versions["raw"], color="gray", alpha=0.55, label="raw")
     axis.plot(times, versions["gaussian"], label="Gaussian (2-sample sigma)")
+    axis.plot(times, versions["median"], label="Median (5-sample window)")
     axis.set_ylabel(channel_name)
     axis.legend()
 
