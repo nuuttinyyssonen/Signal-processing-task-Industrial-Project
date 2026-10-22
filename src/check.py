@@ -22,8 +22,11 @@ def get_samples_in_range(signal_path, start_time_s, end_time_s, sample_rate=None
     start_idx = int(start_time_s * sample_rate)
     end_idx = int(end_time_s * sample_rate)
 
-    # Read the binary file as rows with two channels: adc1 and adc2.
-    signal = np.memmap(signal_path, dtype=np.uint16, mode="r").reshape(-1, 2)
+    dtype = np.dtype(meta.get("dtype", "uint16"))
+    if dtype not in (np.dtype(np.uint16), np.dtype(np.float32)):
+        raise ValueError(f"unsupported signal dtype: {dtype}")
+    channel_count = len(meta.get("channels", ["adc1", "adc2"]))
+    signal = np.memmap(signal_path, dtype=dtype, mode="r").reshape(-1, channel_count)
 
     # Keep the indexes inside the available signal data.
     start_idx = max(0, start_idx)
@@ -32,7 +35,7 @@ def get_samples_in_range(signal_path, start_time_s, end_time_s, sample_rate=None
     # Return the rows from the start index up to (but not including) the end index.
     return signal[start_idx:end_idx]
 
-#Example usage of the function (poistetaan myöhemmin)
+# Example usage of the function (poistetaan myöhemmin)
 if __name__ == "__main__":
     root = Path(__file__).resolve().parents[1]
     signal_path = root / "data" / "example_out" / "signal.u16"
