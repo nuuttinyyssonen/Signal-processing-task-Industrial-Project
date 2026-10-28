@@ -37,6 +37,8 @@ python src/smooth.py data/example_out/signal.u16 data/smoothed_out --sigma-ms 0.
 
 The output contains an interleaved `signal.f32` file and a `meta.json` recording the dtype and smoothing settings. The input binary is left unchanged. The default sigma is 0.04 ms (2 samples at 50 kHz); adjust it for the signal and verify the result with `src/compare_smoothing.py`. Use `get_samples_in_range` from `check.py` to read time ranges from either the original `uint16` data or smoothed `float32` output; it selects the format from metadata.
 
+In the desktop viewer, select a `.csv`, `.u16`, or `.f32` signal and use the checkboxes in the file card to toggle baseline removal (0.3 s rolling median) and Gaussian smoothing (0.04 ms sigma) on the Sensor 1 overview. The source file is not modified.
+
 ## Tests for data conversion
 
 Run tests with:

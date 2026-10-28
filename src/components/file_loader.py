@@ -17,11 +17,12 @@ from components.theme import (
 
 
 class FileLoaderCard(ctk.CTkFrame):
-    def __init__(self, parent, on_file_selected=None):
+    def __init__(self, parent, on_file_selected=None, on_processing_changed=None):
         super().__init__(
             parent, fg_color=CARD, corner_radius=6, border_width=1, border_color=BORDER
         )
         self.on_file_selected = on_file_selected
+        self.on_processing_changed = on_processing_changed
 
         section_label(self, "SIGNAL FILE").pack(fill="x", padx=12, pady=(10, 0))
         self.file_name_label = ctk.CTkLabel(
@@ -44,6 +45,26 @@ class FileLoaderCard(ctk.CTkFrame):
             corner_radius=4,
             command=self.choose_file,
         ).pack(fill="x", padx=12, pady=(10, 8))
+
+        section_label(self, "SIGNAL PROCESSING").pack(fill="x", padx=12, pady=(0, 4))
+        self.baseline_var = ctk.BooleanVar(value=False)
+        self.smoothing_var = ctk.BooleanVar(value=False)
+        for text, variable in (
+            ("Remove baseline", self.baseline_var),
+            ("Gaussian smoothing (0.04 ms)", self.smoothing_var),
+        ):
+            ctk.CTkCheckBox(
+                self,
+                text=text,
+                variable=variable,
+                fg_color=TEAL,
+                hover_color=TEAL_HOVER,
+                checkbox_width=16,
+                checkbox_height=16,
+                corner_radius=3,
+                font=ctk.CTkFont(size=12),
+                command=self._processing_changed,
+            ).pack(anchor="w", padx=12, pady=3)
 
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", padx=12)
@@ -73,7 +94,7 @@ class FileLoaderCard(ctk.CTkFrame):
     def choose_file(self):
         path = filedialog.askopenfilename(
             title="Select a signal file",
-            filetypes=[("Signal files", "*.csv *.u16")],
+            filetypes=[("Signal files", "*.csv *.u16 *.f32")],
         )
 
         if not path:
@@ -85,3 +106,7 @@ class FileLoaderCard(ctk.CTkFrame):
 
         if self.on_file_selected:
             self.on_file_selected(p)
+
+    def _processing_changed(self):
+        if self.on_processing_changed:
+            self.on_processing_changed()

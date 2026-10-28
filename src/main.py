@@ -33,7 +33,11 @@ class main(ctk.CTk):
         sidebar.grid(row=0, column=0, sticky="ns", padx=(12, 0), pady=12)
         sidebar.grid_propagate(False)
 
-        self.file_loader = FileLoaderCard(sidebar, on_file_selected=self.on_file_selected)
+        self.file_loader = FileLoaderCard(
+            sidebar,
+            on_file_selected=self.on_file_selected,
+            on_processing_changed=self.on_processing_changed,
+        )
         self.file_loader.pack(fill="x", pady=(0, 10))
 
         self.controls = ControlsPanel(sidebar, on_change=self.on_controls_changed)
@@ -68,7 +72,7 @@ class main(ctk.CTk):
     def on_file_selected(self, path: Path):
         """Tiedosto valittu: .u16 piirretään suoraan, .csv konvertoidaan ensin."""
     
-        if path.suffix == ".u16":
+        if path.suffix in (".u16", ".f32"):
             self.plots.load_and_plot_binary(str(path.parent))
             self.file_loader.status_label.configure(text="Ready")
             return
@@ -95,6 +99,12 @@ class main(ctk.CTk):
         """Jokin säädin muuttui. Asetukset: self.controls.get_settings()."""
         # TODO: kytke kuvaajiin ja piikkien tunnistukseen
         pass
+
+    def on_processing_changed(self):
+        self.plots.set_processing(
+            remove_baseline=self.file_loader.baseline_var.get(),
+            smooth=self.file_loader.smoothing_var.get(),
+        )
 
 
 if __name__ == "__main__":
