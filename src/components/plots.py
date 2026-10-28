@@ -7,12 +7,19 @@ import numpy as np
 import os
 import json
 
+from baseline import remove_baseline
+from smooth import smooth_gaussian
+
+
 class PlotsPanel(ctk.CTkFrame):
     def __init__(self, parent):
         super().__init__(parent, fg_color="transparent")
         
         self.time_data = None
         self.signal_data = None
+        self.sample_rate = None
+        self.remove_baseline_enabled = False
+        self.smoothing_enabled = False
         
         # Pääkehys kuvaajalle
         plot_frame = ctk.CTkFrame(self, corner_radius=6)
@@ -58,10 +65,9 @@ class PlotsPanel(ctk.CTkFrame):
 
     def load_and_plot_binary(self, output_dir="data/example_out"):
         """Lataa binääridatan, laskee loogisen aika-akselin ja piirtää kuvaajan"""
-        signal_path = os.path.join(output_dir, "signal.u16")
         meta_path = os.path.join(output_dir, "meta.json")
 
-        if not os.path.exists(signal_path) or not os.path.exists(meta_path):
+        if not os.path.exists(meta_path):
             print(f"Binääritiedostoja ei löydy polusta {output_dir}. Aja ensin convert.py!")
             return
 
@@ -69,25 +75,53 @@ class PlotsPanel(ctk.CTkFrame):
             meta = json.load(f)
         
         sample_rate = meta.get("sample_rate", 50000)
+        dtype = np.dtype(meta.get("dtype", "uint16"))
+        if dtype == np.dtype(np.uint16):
+            signal_path = os.path.join(output_dir, "signal.u16")
+        elif dtype == np.dtype(np.float32):
+            signal_path = os.path.join(output_dir, "signal.f32")
+        else:
+            raise ValueError(f"Unsupported signal dtype: {dtype}")
+        if not os.path.exists(signal_path):
+            print(f"Binääritiedostoja ei löydy polusta {output_dir}. Aja ensin convert.py!")
+            return
 
-        # Luetaan data ja otetaan ensimmäinen kanava (interleaved)
-        data = np.fromfile(signal_path, dtype=np.uint16)
-        adc1 = data[0::2]
+        channel_count = len(meta.get("channels", ["adc1", "adc2"]))
+        data = np.fromfile(signal_path, dtype=dtype).reshape(-1, channel_count)
+        adc1 = data[:, 0]
 
         # Luodaan looginen aikavektori sekunteina (esim. 50 kHz taajuudella)
         self.time_data = np.arange(len(adc1)) / sample_rate
         self.signal_data = adc1
+        self.sample_rate = sample_rate
 
         # Piirretään data ja asetetaan oletusnäkyvyys
         self.reset_view()
+
+    def set_processing(self, remove_baseline=False, smooth=False):
+        self.remove_baseline_enabled = remove_baseline
+        self.smoothing_enabled = smooth
+        if self.time_data is None or self.signal_data is None:
+            return
+
+        view_limits = self.ax.get_xlim()
+        self.update_plot()
+        self.ax.set_xlim(view_limits)
+        self.canvas.draw()
 
     def update_plot(self):
         """Piirtää datan uudelleen kuvaajaan"""
         if self.time_data is None or self.signal_data is None:
             return
             
+        display_data = self.signal_data
+        if self.remove_baseline_enabled:
+            display_data, _ = remove_baseline(display_data, self.sample_rate)
+        if self.smoothing_enabled:
+            display_data = smooth_gaussian(display_data, sigma_s=0.00004, fs=self.sample_rate)
+
         self.ax.clear()
-        self.ax.plot(self.time_data, self.signal_data, color='#1f77b4', linewidth=0.8)
+        self.ax.plot(self.time_data, display_data, color='#1f77b4', linewidth=0.8)
         self.ax.set_facecolor('#1e1e1e')
         self.ax.set_title("Sensor 1 (adc1) - Yleiskuva", color='white', fontsize=10)
         self.ax.set_xlabel("Aika (s)", color='white', fontsize=9)
