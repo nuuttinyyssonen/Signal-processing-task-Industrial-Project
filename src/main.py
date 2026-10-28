@@ -1,5 +1,9 @@
+import threading
+from pathlib import Path
 
 import customtkinter as ctk
+
+from convert import convert_csv
 
 from components.controls import ControlsPanel
 from components.file_loader import FileLoaderCard
@@ -29,7 +33,7 @@ class main(ctk.CTk):
         sidebar.grid(row=0, column=0, sticky="ns", padx=(12, 0), pady=12)
         sidebar.grid_propagate(False)
 
-        self.file_loader = FileLoaderCard(sidebar)
+        self.file_loader = FileLoaderCard(sidebar, on_file_selected=self.on_file_selected)
         self.file_loader.pack(fill="x", pady=(0, 10))
 
         self.controls = ControlsPanel(sidebar, on_change=self.on_controls_changed)
@@ -61,6 +65,31 @@ class main(ctk.CTk):
         except Exception:
             pass
 
+    def on_file_selected(self, path: Path):
+        """Tiedosto valittu: .u16 piirretään suoraan, .csv konvertoidaan ensin."""
+    
+        if path.suffix == ".u16":
+            self.plots.load_and_plot_binary(str(path.parent))
+            self.file_loader.status_label.configure(text="Ready")
+            return
+
+       
+        out_dir = path.with_suffix("")
+        self.file_loader.status_label.configure(text="Converting…")
+        self.file_loader.progress.configure(mode="indeterminate")
+        self.file_loader.progress.start()
+
+        def convert():
+            convert_csv(str(path), str(out_dir))
+
+            def done():
+                self.file_loader.status_label.configure(text="Ready")
+                self.file_loader.progress.stop()
+                self.plots.load_and_plot_binary(str(out_dir))
+
+            self.after(0, done)
+        threading.Thread(target=convert, daemon=True).start()
+  
     # ------------------------------------------------------------ tapahtumat
     def on_controls_changed(self):
         """Jokin säädin muuttui. Asetukset: self.controls.get_settings()."""
