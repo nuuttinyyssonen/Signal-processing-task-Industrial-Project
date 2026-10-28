@@ -20,6 +20,8 @@ class PlotsPanel(ctk.CTkFrame):
         self.sample_rate = None
         self.remove_baseline_enabled = False
         self.smoothing_enabled = False
+        self.selection_patch = None
+        self.overview_bucket_count = 1500
         
         # Pääkehys kuvaajalle
         plot_frame = ctk.CTkFrame(self, corner_radius=6)
@@ -33,6 +35,26 @@ class PlotsPanel(ctk.CTkFrame):
             text="Signaalin yleiskuva", 
             font=("", 11, "bold")
         ).pack(side="left")
+
+        overview_controls = ctk.CTkFrame(header_frame, fg_color="transparent")
+        overview_controls.pack(side="left", padx=(12, 0))
+        ctk.CTkLabel(overview_controls, text="Overview buckets:").pack(side="left", padx=(0, 4))
+        self.overview_bucket_entry = ctk.CTkEntry(
+            overview_controls,
+            width=70,
+            height=24,
+            justify="center"
+        )
+        self.overview_bucket_entry.insert(0, str(self.overview_bucket_count))
+        self.overview_bucket_entry.pack(side="left", padx=2)
+        self.overview_bucket_entry.bind("<Return>", self._apply_overview_bucket_count)
+        ctk.CTkButton(
+            overview_controls,
+            text="Apply",
+            width=50,
+            height=24,
+            command=self._apply_overview_bucket_count
+        ).pack(side="left", padx=2)
         
         # Navigaatio- / zoomauspainikkeet oikeassa reunassa
         btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
@@ -44,10 +66,19 @@ class PlotsPanel(ctk.CTkFrame):
         ctk.CTkButton(btn_frame, text="+", width=35, height=24, command=self.zoom_in).pack(side="left", padx=2)
         ctk.CTkButton(btn_frame, text="Reset", width=45, height=24, command=self.reset_view).pack(side="left", padx=2)
 
-        # Matplotlib-figuuri
-        self.fig, self.ax = plt.subplots(figsize=(8, 4), dpi=100)
+        # Matplotlib-figuuri: yläosa on pääplotti, alaosa on downsamplettu yleiskuva
+        self.fig, (self.ax, self.ax_overview) = plt.subplots(
+            2,
+            1,
+            figsize=(8, 5.8),
+            dpi=100,
+            gridspec_kw={'height_ratios': [4.6, 1.4]},
+            constrained_layout=False
+        )
         self.fig.patch.set_facecolor('#2b2b2b')
         self.ax.set_facecolor('#1e1e1e')
+        self.ax_overview.set_facecolor('#1e1e1e')
+        self.fig.subplots_adjust(hspace=0.22, top=0.95, bottom=0.08)
         
         # Oletusasetukset ennen dataa
         self.ax.set_title("Ei dataa ladattu", color='white', fontsize=10)
@@ -57,11 +88,43 @@ class PlotsPanel(ctk.CTkFrame):
         self.ax.grid(True, color='#444444', linestyle='--', alpha=0.5)
         for spine in self.ax.spines.values():
             spine.set_edgecolor('#555555')
-        self.fig.tight_layout()
 
+        self.ax_overview.set_title("Downsampled overview", color='white', fontsize=8)
+        self.ax_overview.tick_params(colors='white', labelsize=7)
+        self.ax_overview.grid(True, color='#444444', linestyle='--', alpha=0.4)
+        for spine in self.ax_overview.spines.values():
+            spine.set_edgecolor('#555555')
+        self.fig.tight_layout()
+        self.overview_error_label = ctk.CTkLabel(
+            plot_frame,
+            text="",
+            text_color="#ff6b6b",
+            anchor="w"
+        )
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=5)
+
+    def _apply_overview_bucket_count(self, _event=None):
+        try:
+            bucket_count = int(self.overview_bucket_entry.get())
+            if not 1 <= bucket_count <= 100000:
+                raise ValueError
+        except ValueError:
+            self.overview_error_label.configure(
+                text="Enter a whole number between 1 and 100000."
+            )
+            self.overview_error_label.pack(fill="x", padx=10)
+            return
+
+        self.overview_bucket_count = bucket_count
+        self.overview_error_label.pack_forget()
+        if self.time_data is not None and self.signal_data is not None:
+            view_limits = self.ax.get_xlim()
+            self.update_plot()
+            self.ax.set_xlim(view_limits)
+            self._sync_overview_selection()
+            self.canvas.draw()
 
     def load_and_plot_binary(self, output_dir="data/example_out"):
         """Lataa binääridatan, laskee loogisen aika-akselin ja piirtää kuvaajan"""
@@ -98,6 +161,63 @@ class PlotsPanel(ctk.CTkFrame):
         # Piirretään data ja asetetaan oletusnäkyvyys
         self.reset_view()
 
+    def _draw_overview(self, display_data):
+        """Piirtää downsamplettuna näkyvän yleiskuvan alempaan akseliin."""
+        if self.time_data is None:
+            return
+
+        # Keep each bucket's minimum and maximum so narrow peaks survive downsampling.
+        bucket_count = min(self.overview_bucket_count, len(display_data))
+        boundaries = np.linspace(0, len(display_data), bucket_count + 1, dtype=int)
+        overview_indices = []
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            bucket = display_data[start:end]
+            min_index = start + np.argmin(bucket)
+            max_index = start + np.argmax(bucket)
+            overview_indices.extend(sorted({min_index, max_index}))
+
+        overview_indices = np.asarray(overview_indices, dtype=int)
+        overview_x = self.time_data[overview_indices]
+        overview_y = display_data[overview_indices]
+
+        self.selection_patch = None
+        self.ax_overview.clear()
+        self.ax_overview.plot(overview_x, overview_y, color='#4ecdc4', linewidth=0.8)
+        self.ax_overview.set_facecolor('#1e1e1e')
+        self.ax_overview.set_title("Downsampled overview", color='white', fontsize=8)
+        self.ax_overview.set_xlabel("Aika (s)", color='white', fontsize=8)
+        self.ax_overview.set_ylabel("", color='white', fontsize=8)
+        self.ax_overview.tick_params(colors='white', labelsize=7)
+        self.ax_overview.grid(True, color='#444444', linestyle='--', alpha=0.4)
+        for spine in self.ax_overview.spines.values():
+            spine.set_edgecolor('#555555')
+
+        self.ax_overview.set_xlim(self.time_data[0], self.time_data[-1])
+        self.ax_overview.margins(x=0)
+        self._sync_overview_selection()
+
+    def _sync_overview_selection(self):
+        """Korostaa pääikkunan alueen yleiskuvan alla."""
+        if self.time_data is None or self.ax_overview is None:
+            return
+
+        xmin, xmax = self.ax.get_xlim()
+        if self.selection_patch is not None:
+            try:
+                self.selection_patch.remove()
+            except Exception:
+                pass
+            self.selection_patch = None
+
+        self.selection_patch = self.ax_overview.axvspan(
+            xmin,
+            xmax,
+            facecolor='white',
+            alpha=0.18,
+            edgecolor='none'
+        )
+        self.ax_overview.set_xlim(self.time_data[0], self.time_data[-1])
+
     def set_processing(self, remove_baseline=False, smooth=False):
         self.remove_baseline_enabled = remove_baseline
         self.smoothing_enabled = smooth
@@ -107,6 +227,7 @@ class PlotsPanel(ctk.CTkFrame):
         view_limits = self.ax.get_xlim()
         self.update_plot()
         self.ax.set_xlim(view_limits)
+        self._sync_overview_selection()
         self.canvas.draw()
 
     def update_plot(self):
@@ -130,7 +251,8 @@ class PlotsPanel(ctk.CTkFrame):
         self.ax.grid(True, color='#444444', linestyle='--', alpha=0.5)
         for spine in self.ax.spines.values():
             spine.set_edgecolor('#555555')
-            
+
+        self._draw_overview(display_data)
         self.fig.tight_layout()
         self.canvas.draw()
 
@@ -140,6 +262,7 @@ class PlotsPanel(ctk.CTkFrame):
             return
         self.update_plot()
         self.ax.set_xlim(self.time_data[0], self.time_data[-1])
+        self._sync_overview_selection()
         self.canvas.draw()
 
     def zoom_in(self):
@@ -150,6 +273,7 @@ class PlotsPanel(ctk.CTkFrame):
         xmid = (xmin + xmax) / 2
         span = (xmax - xmin) / 2
         self.ax.set_xlim(xmid - span/2, xmid + span/2)
+        self._sync_overview_selection()
         self.canvas.draw()
 
     def zoom_out(self):
@@ -167,6 +291,7 @@ class PlotsPanel(ctk.CTkFrame):
         new_xmax = min(self.time_data[-1], xmid + new_span)
         
         self.ax.set_xlim(new_xmin, new_xmax)
+        self._sync_overview_selection()
         self.canvas.draw()
 
     def pan_left(self):
@@ -179,6 +304,7 @@ class PlotsPanel(ctk.CTkFrame):
         new_xmin = max(self.time_data[0], xmin - shift)
         new_xmax = new_xmin + span
         self.ax.set_xlim(new_xmin, new_xmax)
+        self._sync_overview_selection()
         self.canvas.draw()
 
     def pan_right(self):
@@ -191,4 +317,5 @@ class PlotsPanel(ctk.CTkFrame):
         new_xmax = min(self.time_data[-1], xmax + shift)
         new_xmin = new_xmax - span
         self.ax.set_xlim(new_xmin, new_xmax)
+        self._sync_overview_selection()
         self.canvas.draw()
