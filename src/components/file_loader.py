@@ -1,6 +1,9 @@
 
 import customtkinter as ctk
 
+from pathlib import Path
+from tkinter import filedialog
+
 from components.theme import (
     BORDER,
     CARD,
@@ -14,10 +17,11 @@ from components.theme import (
 
 
 class FileLoaderCard(ctk.CTkFrame):
-    def __init__(self, parent):
+    def __init__(self, parent, on_file_selected=None):
         super().__init__(
             parent, fg_color=CARD, corner_radius=6, border_width=1, border_color=BORDER
         )
+        self.on_file_selected = on_file_selected
 
         section_label(self, "SIGNAL FILE").pack(fill="x", padx=12, pady=(10, 0))
         self.file_name_label = ctk.CTkLabel(
@@ -67,5 +71,17 @@ class FileLoaderCard(ctk.CTkFrame):
         ).pack(fill="x", padx=12, pady=(0, 10))
 
     def choose_file(self):
-        """TODO: tiedoston valinta ja lataus."""
-        pass
+        path = filedialog.askopenfilename(
+            title="Select a signal file",
+            filetypes=[("Signal files", "*.csv *.u16")],
+        )
+
+        if not path:
+            return
+
+        p = Path(path)
+        self.file_name_label.configure(text=p.name)
+        self.file_info_label.configure(text=f"{p.stat().st_size / 1e6:.1f} MB")
+
+        if self.on_file_selected:
+            self.on_file_selected(p)
