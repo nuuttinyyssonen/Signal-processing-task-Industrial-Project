@@ -8,7 +8,7 @@ The data is not stored in the repo (the `data/` folder is gitignored). To run th
 2. Put it in the `data/` folder and rename it to `example_signal.csv`
    (the original name `IDP_signal_example_[sami_dmitry_september2023].csv` contains
    square brackets that can cause problems in the terminal).
-3. Install dependencies: `pip install numpy pandas scipy matplotlib pytest`
+3. Install dependencies: `pip install numpy pandas scipy matplotlib pytest customtkinter`
 
 ## Data conversion
 
