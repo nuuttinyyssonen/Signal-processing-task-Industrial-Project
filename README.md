@@ -37,7 +37,25 @@ python src/smooth.py data/example_out/signal.u16 data/smoothed_out --sigma-ms 0.
 
 The output contains an interleaved `signal.f32` file and a `meta.json` recording the dtype and smoothing settings. The input binary is left unchanged. The default sigma is 0.04 ms (2 samples at 50 kHz); adjust it for the signal and verify the result with `src/compare_smoothing.py`. Use `get_samples_in_range` from `check.py` to read time ranges from either the original `uint16` data or smoothed `float32` output; it selects the format from metadata.
 
-In the desktop viewer, select a `.csv`, `.u16`, or `.f32` signal and use the checkboxes in the file card to toggle baseline removal (0.3 s rolling median) and Gaussian smoothing (0.04 ms sigma) on the Sensor 1 overview. The source file is not modified.
+In the desktop viewer, select a `.csv`, `.u16`, or `.f32` signal and use the checkboxes in the file card to toggle baseline removal (0.3 s rolling median) and Gaussian smoothing (0.04 ms sigma) on the selected sensor. The source file is not modified.
+
+## CWT peak detection
+
+`src/cwt_peak_detection.py` provides `detect_peaks_cwt`, based on
+`scipy.signal.find_peaks_cwt`. It processes 1,000,000 core samples per chunk
+plus a bounded overlap so peaks close to chunk boundaries are retained. Each
+chunk's median is used as its local baseline; detected candidates are then
+confirmed with CWT on a small local window. This keeps memory use bounded for
+long, memory-mapped signals. Set `chunk_size` to adjust the core chunk size,
+and set `widths` to the expected peak widths in samples. The function returns
+peak indexes, times, amplitudes, prominence, and polarity; downward peaks are
+ignored by default. The default widths (100-1000 samples) suit the broad peaks
+in the example dataset; adjust them for other signals. The defaults use a
+100-unit prominence threshold, 0.3-second minimum peak distance, and a 50-unit
+height above the local median baseline. The height threshold rejects
+low-amplitude zero-like events while retaining the 45 middle, high, and low
+peaks.
+
 
 ## Tests for data conversion
 

@@ -1,4 +1,5 @@
 
+import math
 import customtkinter as ctk
 
 from components.theme import (
@@ -19,12 +20,11 @@ class ControlsPanel(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.on_change = on_change
 
-        self.channel_var = ctk.StringVar(value="sensor1")
+        self.channel_var = ctk.StringVar(value="sensor2")
         self.window_var = ctk.StringVar(value="10 min")
         self.envelope_var = ctk.BooleanVar(value=True)
         self.grid_var = ctk.BooleanVar(value=True)
-        self.split_var = ctk.BooleanVar(value=True)
-        self.ignore_down_var = ctk.BooleanVar(value=True)
+        self.cwt_enabled_var = ctk.BooleanVar(value=False)
 
         self._build_channel_card()
         self._build_window_card()
@@ -34,22 +34,25 @@ class ControlsPanel(ctk.CTkFrame):
     def get_settings(self):
         """Palauttaa asetukset sanakirjana."""
 
-        def to_float(entry, default):
+        def to_float(entry, label, minimum):
             try:
-                return float(entry.get().replace(",", "."))
-            except ValueError:
-                return default
+                value = float(entry.get().replace(",", "."))
+            except ValueError as error:
+                raise ValueError(f"{label} must be a number") from error
+            if not math.isfinite(value) or value < minimum:
+                raise ValueError(f"{label} must be at least {minimum:g}")
+            return value
 
         return {
             "channel": self.channel_var.get(),
-            "window": self.window_var.get(),
-            "envelope": self.envelope_var.get(),
-            "grid": self.grid_var.get(),
-            "threshold": self.threshold_slider.get(),
-            "min_prominence": to_float(self.prominence_entry, 80.0),
-            "min_distance_ms": to_float(self.distance_entry, 5.0),
-            "split_overlapping": self.split_var.get(),
-            "ignore_downward": self.ignore_down_var.get(),
+            "cwt_enabled": self.cwt_enabled_var.get(),
+            "min_prominence": to_float(
+                self.prominence_entry, "Minimum prominence", 0
+            ),
+            "min_distance_s": to_float(
+                self.distance_entry, "Minimum distance (ms)", 0.001
+            ) / 1000,
+            "min_height": to_float(self.height_entry, "Minimum height", 0),
         }
 
     # ------------------------------------------------------------ sisäiset
@@ -79,7 +82,6 @@ class ControlsPanel(ctk.CTkFrame):
         for text, value in (
             ("Sensor 1", "sensor1"),
             ("Sensor 2", "sensor2"),
-            ("Both (stacked)", "both"),
         ):
             ctk.CTkRadioButton(
                 c,
@@ -125,41 +127,44 @@ class ControlsPanel(ctk.CTkFrame):
         c.pack(fill="x")
         section_label(c, "PEAK DETECTION").pack(fill="x", padx=12, pady=(10, 4))
 
-        self.threshold_label = small_label(c, "Threshold: 6 × noise (MAD)")
-        self.threshold_label.pack(fill="x", padx=12)
-        self.threshold_slider = ctk.CTkSlider(
+        ctk.CTkCheckBox(
             c,
-            from_=1,
-            to=15,
-            number_of_steps=28,
-            progress_color=TEAL,
-            button_color=TEAL,
-            button_hover_color=TEAL_HOVER,
-            command=self._on_threshold_change,
-        )
-        self.threshold_slider.set(6)
-        self.threshold_slider.pack(fill="x", padx=12, pady=(4, 8))
+            text="Enable CWT peak detection",
+            variable=self.cwt_enabled_var,
+            fg_color=TEAL,
+            hover_color=TEAL_HOVER,
+            checkbox_width=16,
+            checkbox_height=16,
+            corner_radius=3,
+            font=ctk.CTkFont(size=12),
+            command=self._changed,
+        ).pack(anchor="w", padx=12, pady=(4, 8))
 
         small_label(c, "Min prominence").pack(fill="x", padx=12)
         self.prominence_entry = ctk.CTkEntry(c, height=30, corner_radius=4)
-        self.prominence_entry.insert(0, "80")
+        self.prominence_entry.insert(0, "100")
         self.prominence_entry.pack(fill="x", padx=12, pady=(2, 8))
 
         small_label(c, "Min distance (ms)").pack(fill="x", padx=12)
         self.distance_entry = ctk.CTkEntry(c, height=30, corner_radius=4)
-        self.distance_entry.insert(0, "5")
+        self.distance_entry.insert(0, "300")
         self.distance_entry.pack(fill="x", padx=12, pady=(2, 8))
 
-        self._checkbox(c, "Split overlapping peaks", self.split_var)
-        self._checkbox(c, "Ignore downward spikes", self.ignore_down_var)
+        small_label(c, "Min height above median baseline").pack(fill="x", padx=12)
+        self.height_entry = ctk.CTkEntry(c, height=30, corner_radius=4)
+        self.height_entry.insert(0, "50")
+        self.height_entry.pack(fill="x", padx=12, pady=(2, 8))
+
+        self.peak_status_label = small_label(c, "")
+        self.peak_status_label.pack(fill="x", padx=12, pady=(0, 8))
         ctk.CTkFrame(c, fg_color="transparent", height=6).pack()
 
-        for entry in (self.prominence_entry, self.distance_entry):
+        for entry in (self.prominence_entry, self.distance_entry, self.height_entry):
             entry.bind("<Return>", self._changed)
             entry.bind("<FocusOut>", self._changed)
 
-    def _on_threshold_change(self, value):
-        self.threshold_label.configure(
-            text=f"Threshold: {value:.1f} × noise (MAD)".replace(".0 ", " ")
+    def set_peak_status(self, text, error=False):
+        self.peak_status_label.configure(
+            text=text,
+            text_color="#b91c1c" if error else TEAL,
         )
-        self._changed()

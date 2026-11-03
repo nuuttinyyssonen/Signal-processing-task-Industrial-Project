@@ -45,7 +45,7 @@ class ResultsPanel(ctk.CTkFrame):
             anchor="w",
         )
         self.peak_count_label.pack(fill="x", padx=14)
-        small_label(summary, "above threshold in this window").pack(fill="x", padx=14)
+        small_label(summary, "in the selected signal").pack(fill="x", padx=14)
         self.artifact_label = ctk.CTkLabel(
             summary,
             text="0 artifacts rejected",

@@ -8,6 +8,7 @@ import os
 import json
 
 from baseline import remove_baseline
+from cwt_peak_detection import Peak
 from smooth import smooth_gaussian
 
 
@@ -16,8 +17,11 @@ class PlotsPanel(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         
         self.signal_data = None
+        self.mapped_data = None
+        self.channel_name = "Sensor 2 (adc2)"
         self.sample_rate = None
         self.sample_count = 0
+        self.detected_peaks = []
         self.remove_baseline_enabled = False
         self.smoothing_enabled = False
         self.selection_patch = None
@@ -137,7 +141,7 @@ class PlotsPanel(ctk.CTkFrame):
             self._sync_overview_selection()
             self.canvas.draw()
 
-    def load_and_plot_binary(self, output_dir="data/example_out"):
+    def load_and_plot_binary(self, output_dir="data/example_out", channel="sensor2"):
         """Lataa binääridatan, laskee loogisen aika-akselin ja piirtää kuvaajan"""
         meta_path = os.path.join(output_dir, "meta.json")
 
@@ -175,11 +179,84 @@ class PlotsPanel(ctk.CTkFrame):
             mode="r",
             shape=(self.sample_count, channel_count),
         )
-        self.signal_data = mapped_data[:, 0]
+        channel_index = 1 if channel == "sensor2" else 0
+        if channel_index >= channel_count:
+            raise ValueError(
+                f"{self._channel_display_name(channel)} is not present in this signal"
+            )
+        self.mapped_data = mapped_data
+        self.channel_name = self._channel_display_name(channel)
+        self.signal_data = mapped_data[:, channel_index]
         self.sample_rate = sample_rate
+        self.detected_peaks = []
 
         self._build_overview()
         self.reset_view()
+
+    @staticmethod
+    def _channel_display_name(channel):
+        return "Sensor 2 (adc2)" if channel == "sensor2" else "Sensor 1 (adc1)"
+
+    def set_channel(self, channel):
+        if channel not in ("sensor1", "sensor2"):
+            raise ValueError(f"Unsupported channel: {channel}")
+        if self.channel_name == self._channel_display_name(channel):
+            return
+
+        channel_index = 1 if channel == "sensor2" else 0
+        if self.mapped_data is None:
+            self.channel_name = self._channel_display_name(channel)
+            return
+        if channel_index >= self.mapped_data.shape[1]:
+            raise ValueError(
+                f"{self._channel_display_name(channel)} is not present in this signal"
+            )
+
+        self.channel_name = self._channel_display_name(channel)
+        self.signal_data = self.mapped_data[:, channel_index]
+        self.detected_peaks = []
+        self._build_overview()
+        self.reset_view()
+
+    def set_detected_peaks(self, peaks):
+        self.detected_peaks = list(peaks)
+        if self.signal_data is not None:
+            self._build_overview()
+            self.update_plot()
+
+    def _peak_display_values(self):
+        indexes = np.asarray([peak.index for peak in self.detected_peaks], dtype=np.intp)
+        if indexes.size == 0:
+            return indexes, np.empty(0, dtype=np.float64)
+        if not self.remove_baseline_enabled and not self.smoothing_enabled:
+            return indexes, np.asarray(self.signal_data[indexes], dtype=np.float64)
+
+        values = np.empty(indexes.size, dtype=np.float64)
+        chunk_size = 250_000
+        for chunk_start in np.unique(indexes // chunk_size * chunk_size):
+            chunk_end = min(int(chunk_start) + chunk_size, self.sample_count)
+            selected = (indexes >= chunk_start) & (indexes < chunk_end)
+            processed = self._process_chunk(int(chunk_start), chunk_end)
+            values[selected] = processed[indexes[selected] - chunk_start]
+        return indexes, values
+
+    def _draw_peak_markers(self, axes, start=0, end=None):
+        if not self.detected_peaks or self.sample_rate is None:
+            return
+        indexes, amplitudes = self._peak_display_values()
+        visible = (indexes >= start) if end is None else (
+            (indexes >= start) & (indexes < end)
+        )
+        if np.any(visible):
+            axes.scatter(
+                indexes[visible] / self.sample_rate,
+                amplitudes[visible],
+                marker="x",
+                color="red",
+                s=36,
+                linewidths=1.5,
+                zorder=10,
+            )
 
     def _build_overview(self):
         """Build a bounded min/max overview from raw or processed mapped data."""
@@ -208,12 +285,13 @@ class PlotsPanel(ctk.CTkFrame):
             color='#4ecdc4',
             linewidth=0.8
         )
+        self._draw_peak_markers(self.ax_overview)
         self.ax_overview.set_facecolor('#1e1e1e')
         view_type = "Processed" if (
             self.remove_baseline_enabled or self.smoothing_enabled
         ) else "Raw"
         self.ax_overview.set_title(
-            f"{view_type} signal overview (downsampled)",
+            f"{self.channel_name} {view_type.lower()} overview (downsampled)",
             color='white',
             fontsize=8
         )
@@ -428,7 +506,7 @@ class PlotsPanel(ctk.CTkFrame):
         visible_time = visible_indices / self.sample_rate
         self.ax.plot(visible_time, display_data, color='#1f77b4', linewidth=0.8)
         self.ax.set_facecolor('#1e1e1e')
-        self.ax.set_title("Sensor 1 (adc1) - Yleiskuva", color='white', fontsize=10)
+        self.ax.set_title(f"{self.channel_name} - Yleiskuva", color='white', fontsize=10)
         self.ax.set_xlabel("Aika (s)", color='white', fontsize=9)
         self.ax.set_ylabel("Amplitudi", color='white', fontsize=9)
         self.ax.tick_params(colors='white', labelsize=8)
@@ -437,6 +515,7 @@ class PlotsPanel(ctk.CTkFrame):
             spine.set_edgecolor('#555555')
 
         self.ax.set_xlim(max(0, view_limits[0]), min(duration, view_limits[1]))
+        self._draw_peak_markers(self.ax, start, end)
         self._sync_overview_selection()
         self.fig.tight_layout()
         self.canvas.draw()
