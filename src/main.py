@@ -20,7 +20,7 @@ class main(ctk.CTk):
         super().__init__()
         self.title("Signal Viewer")
         self.geometry("1180x840")
-        self.minsize(1000, 720)
+        self.minsize(900, 520)
         self.configure(fg_color=BG)
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -30,10 +30,18 @@ class main(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # --- Vasen sivupalkki: tiedosto + säätimet ---
-        sidebar = ctk.CTkFrame(self, fg_color="transparent", width=250)
-        sidebar.grid(row=0, column=0, sticky="ns", padx=(12, 0), pady=12)
-        sidebar.grid_propagate(False)
+    
+        sidebar = ctk.CTkScrollableFrame(
+            self,
+            width=250,
+            height=700,
+            corner_radius=0,
+            fg_color="transparent",
+            scrollbar_fg_color="transparent",
+            scrollbar_button_color="#9ca3af",
+            scrollbar_button_hover_color="#6b7280",
+        )
+        sidebar.grid(row=0, column=0, sticky="nsew", padx=(12, 0), pady=12)
 
         self.file_loader = FileLoaderCard(
             sidebar,
