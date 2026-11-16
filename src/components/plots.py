@@ -286,9 +286,6 @@ class PlotsPanel(ctk.CTkFrame):
         bucket_count = min(self.overview_bucket_count, self.sample_count)
         signal_data = self.signal_data
         sample_count = self.sample_count
-        sample_rate = self.sample_rate
-        remove_baseline = self.remove_baseline_enabled
-        smoothing = self.smoothing_enabled
 
         self.selection_patch = None
         self.overview_time_data = None
@@ -302,10 +299,7 @@ class PlotsPanel(ctk.CTkFrame):
                 result = self._compute_overview_data(
                     signal_data,
                     sample_count,
-                    sample_rate,
                     bucket_count,
-                    remove_baseline,
-                    smoothing,
                     cancel_event,
                 )
             except Exception as error:
@@ -367,11 +361,8 @@ class PlotsPanel(ctk.CTkFrame):
         )
         self._draw_peak_markers(self.ax_overview)
         self.ax_overview.set_facecolor('#1e1e1e')
-        view_type = "Processed" if (
-            self.remove_baseline_enabled or self.smoothing_enabled
-        ) else "Raw"
         self.ax_overview.set_title(
-            f"{self.channel_name} {view_type.lower()} overview (downsampled)",
+            f"{self.channel_name} raw overview (downsampled)",
             color='white',
             fontsize=8
         )
@@ -386,31 +377,14 @@ class PlotsPanel(ctk.CTkFrame):
         self.ax_overview.margins(x=0)
         self._sync_overview_selection()
 
-    @classmethod
+    @staticmethod
     def _compute_overview_data(
-        cls,
         signal_data,
         sample_count,
-        sample_rate,
         bucket_count,
-        remove_baseline,
-        smoothing,
         cancel_event=None,
     ):
-        """Compute overview extrema without touching Tk or Matplotlib state."""
-        if remove_baseline or smoothing:
-            return cls._processed_min_max_data(
-                signal_data,
-                sample_count,
-                sample_rate,
-                0,
-                sample_count,
-                bucket_count,
-                remove_baseline,
-                smoothing,
-                cancel_event,
-            )
-
+        """Compute raw-signal overview extrema without touching UI state."""
         boundaries = np.linspace(0, sample_count, bucket_count + 1, dtype=int)
         indices = np.empty(bucket_count * 2, dtype=np.intp)
         for bucket_index, (start, end) in enumerate(
