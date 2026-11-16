@@ -37,7 +37,7 @@ python src/smooth.py data/example_out/signal.u16 data/smoothed_out --sigma-ms 0.
 
 The output contains an interleaved `signal.f32` file and a `meta.json` recording the dtype and smoothing settings. The input binary is left unchanged. The default sigma is 0.04 ms (2 samples at 50 kHz); adjust it for the signal and verify the result with `src/compare_smoothing.py`. Use `get_samples_in_range` from `check.py` to read time ranges from either the original `uint16` data or smoothed `float32` output; it selects the format from metadata.
 
-In the desktop viewer, select a `.csv`, `.u16`, or `.f32` signal and use the checkboxes in the file card to toggle baseline removal (0.3 s rolling median) and Gaussian smoothing (0.04 ms sigma) on the selected sensor. The source file is not modified.
+In the desktop viewer, select a `.csv`, `.u16`, or `.f32` signal and use the checkboxes in the file card to toggle baseline removal (0.3 s rolling median) and Gaussian smoothing (0.04 ms sigma) on the selected sensor. When CWT peak detection is enabled, it uses the selected processing options; baseline removal uses a reduced-rate rolling-median approximation during detection for speed, while the detailed plot uses the full rolling median. Changing either checkbox restarts detection. The source file is not modified.
 
 ## CWT peak detection
 

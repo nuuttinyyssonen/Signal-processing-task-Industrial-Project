@@ -25,6 +25,7 @@ class main(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self._peak_detection_generation = 0
+        self._peak_detection_cancel = None
 
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
@@ -76,6 +77,8 @@ class main(ctk.CTk):
         self.results.grid(row=1, column=0, sticky="nsew")
 
     def on_closing(self):
+        if self._peak_detection_cancel is not None:
+            self._peak_detection_cancel.set()
         try:
             self.quit()     # Pysäyttää pääsilmukan
             self.destroy()  # Tuhoaa ikkunan hallitusti
@@ -148,6 +151,10 @@ class main(ctk.CTk):
             settings = self.controls.get_settings()
         except ValueError as error:
             self._peak_detection_generation += 1
+            if self._peak_detection_cancel is not None:
+                self._peak_detection_cancel.set()
+                self._peak_detection_cancel = None
+            self.results.finish_peak_detection()
             self.plots.set_detected_peaks([])
             self.results.set_peaks([], total=0)
             self.controls.set_peak_status(str(error), error=True)
@@ -164,6 +171,9 @@ class main(ctk.CTk):
     def _start_peak_detection(self, settings=None):
         self._peak_detection_generation += 1
         generation = self._peak_detection_generation
+        if self._peak_detection_cancel is not None:
+            self._peak_detection_cancel.set()
+            self._peak_detection_cancel = None
         if settings is None:
             try:
                 settings = self.controls.get_settings()
@@ -172,22 +182,56 @@ class main(ctk.CTk):
                 return
 
         if not settings["cwt_enabled"]:
+            self.results.finish_peak_detection()
             self.plots.set_detected_peaks([])
             self.results.set_peaks([], total=0)
             self.controls.set_peak_status("")
             return
 
         if self.plots.signal_data is None:
+            self.results.finish_peak_detection()
             self.controls.set_peak_status("Load a signal to detect peaks.")
             return
 
         signal = self.plots.signal_data
         sample_rate = self.plots.sample_rate
+        sample_count = self.plots.sample_count
+        remove_baseline = self.plots.remove_baseline_enabled
+        smoothing = self.plots.smoothing_enabled
+        cancel_event = threading.Event()
+        self._peak_detection_cancel = cancel_event
+        signal_processor = None
+        if remove_baseline or smoothing:
+            signal_processor = lambda start, end: self.plots._process_signal_chunk(
+                signal,
+                sample_count,
+                sample_rate,
+                remove_baseline,
+                smoothing,
+                start,
+                end,
+                fast_baseline=True,
+            )
         self.plots.set_detected_peaks([])
         self.results.set_peaks([], total=0)
         self.controls.set_peak_status("Detecting peaks...")
+        self.results.start_peak_detection()
 
         def detect():
+            last_percent = -1
+
+            def report_progress(completed, total):
+                nonlocal last_percent
+                percent = int(completed * 100 / total)
+                if percent != last_percent:
+                    last_percent = percent
+                    self.after(
+                        0,
+                        lambda percent=percent: self._update_peak_detection_progress(
+                            generation, percent
+                        ),
+                    )
+
             try:
                 peaks = detect_peaks_cwt(
                     signal,
@@ -195,6 +239,9 @@ class main(ctk.CTk):
                     min_prominence=settings["min_prominence"],
                     min_distance_s=settings["min_distance_s"],
                     min_height=settings["min_height"],
+                    signal_processor=signal_processor,
+                    cancel_event=cancel_event,
+                    progress_callback=report_progress,
                 )
             except Exception as error:
                 self.after(
@@ -212,9 +259,17 @@ class main(ctk.CTk):
 
         threading.Thread(target=detect, daemon=True).start()
 
+    def _update_peak_detection_progress(self, generation, percent):
+        if generation != self._peak_detection_generation:
+            return
+        self.results.update_peak_detection_progress(percent)
+        self.controls.set_peak_status(f"Detecting peaks... {percent}%")
+
     def _finish_peak_detection(self, generation, peaks=None, error=None):
         if generation != self._peak_detection_generation:
             return
+        self._peak_detection_cancel = None
+        self.results.finish_peak_detection()
         if error is not None:
             self.plots.set_detected_peaks([])
             self.results.set_peaks([], total=0)
@@ -241,6 +296,7 @@ class main(ctk.CTk):
             remove_baseline=self.file_loader.baseline_var.get(),
             smooth=self.file_loader.smoothing_var.get(),
         )
+        self._start_peak_detection()
 
 
 if __name__ == "__main__":

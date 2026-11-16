@@ -8,7 +8,7 @@ import os
 import json
 import threading
 
-from baseline import remove_baseline
+from baseline import remove_baseline, remove_baseline_fast
 from cwt_peak_detection import Peak
 from smooth import smooth_gaussian
 
@@ -238,26 +238,24 @@ class PlotsPanel(ctk.CTkFrame):
             self._render_overview()
             self.update_plot()
 
-    def _peak_display_values(self):
+    def _peak_display_values(self, raw=False):
         indexes = np.asarray([peak.index for peak in self.detected_peaks], dtype=np.intp)
         if indexes.size == 0:
             return indexes, np.empty(0, dtype=np.float64)
-        if not self.remove_baseline_enabled and not self.smoothing_enabled:
+        if raw:
             return indexes, np.asarray(self.signal_data[indexes], dtype=np.float64)
-
-        values = np.empty(indexes.size, dtype=np.float64)
-        chunk_size = 250_000
-        for chunk_start in np.unique(indexes // chunk_size * chunk_size):
-            chunk_end = min(int(chunk_start) + chunk_size, self.sample_count)
-            selected = (indexes >= chunk_start) & (indexes < chunk_end)
-            processed = self._process_chunk(int(chunk_start), chunk_end)
-            values[selected] = processed[indexes[selected] - chunk_start]
+        values = np.asarray(
+            [peak.amplitude for peak in self.detected_peaks],
+            dtype=np.float64,
+        )
         return indexes, values
 
     def _draw_peak_markers(self, axes, start=0, end=None):
         if not self.detected_peaks or self.sample_rate is None:
             return
-        indexes, amplitudes = self._peak_display_values()
+        indexes, amplitudes = self._peak_display_values(
+            raw=axes is self.ax_overview
+        )
         visible = (indexes >= start) if end is None else (
             (indexes >= start) & (indexes < end)
         )
@@ -526,6 +524,7 @@ class PlotsPanel(ctk.CTkFrame):
         smoothing,
         start,
         end,
+        fast_baseline=False,
     ):
         baseline_left = 0
         baseline_right = 0
@@ -542,7 +541,8 @@ class PlotsPanel(ctk.CTkFrame):
         chunk = np.asarray(signal_data[read_start:read_end], dtype=np.float64)
 
         if baseline_enabled:
-            chunk, _ = remove_baseline(chunk, sample_rate)
+            baseline_remover = remove_baseline_fast if fast_baseline else remove_baseline
+            chunk, _ = baseline_remover(chunk, sample_rate)
         if smoothing:
             chunk = smooth_gaussian(chunk, sigma_s=0.00004, fs=sample_rate)
 
