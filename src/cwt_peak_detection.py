@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from threading import Event
 from typing import Literal
 
 import numpy as np
@@ -26,6 +27,9 @@ def detect_peaks_cwt(
     min_snr: float = 1.0,
     polarity: Literal["up", "down", "both"] = "up",
     chunk_size: int = 1_000_000,
+    signal_processor: Callable[[int, int], np.ndarray] | None = None,
+    cancel_event: Event | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[Peak]:
     """Find and confirm peaks in bounded chunks of a one-dimensional signal."""
     values = np.asanyarray(signal)
@@ -59,14 +63,29 @@ def detect_peaks_cwt(
     cwt_radius = int(np.ceil(5 * np.max(cwt_widths)))
     halo = max(distance, cwt_radius)
     directions = ("up", "down") if polarity == "both" else (polarity,)
+    chunks_per_direction = (values.size + chunk_size - 1) // chunk_size
+    total_chunks = chunks_per_direction * len(directions)
+    completed_chunks = 0
     detected: list[Peak] = []
 
     for direction in directions:
         for core_start in range(0, values.size, chunk_size):
+            if cancel_event is not None and cancel_event.is_set():
+                return []
             core_end = min(core_start + chunk_size, values.size)
             read_start = max(0, core_start - halo)
             read_end = min(values.size, core_end + halo)
-            raw_chunk = np.asarray(values[read_start:read_end], dtype=np.float64)
+            if signal_processor is None:
+                raw_chunk = np.asarray(values[read_start:read_end], dtype=np.float64)
+            else:
+                raw_chunk = np.asarray(
+                    signal_processor(read_start, read_end),
+                    dtype=np.float64,
+                )
+                if raw_chunk.shape != (read_end - read_start,):
+                    raise ValueError(
+                        "signal_processor must return one value per requested sample"
+                    )
             if not np.all(np.isfinite(raw_chunk)):
                 raise ValueError("signal must contain only finite values")
 
@@ -87,16 +106,18 @@ def detect_peaks_cwt(
                 candidates[in_core],
                 properties["prominences"][in_core],
             ):
+                if cancel_event is not None and cancel_event.is_set():
+                    return []
                 if working_signal[candidate] < min_height:
                     continue
                 global_candidate = read_start + int(candidate)
                 cwt_start = max(0, global_candidate - cwt_radius)
                 cwt_end = min(values.size, global_candidate + cwt_radius + 1)
-                raw_segment = np.asarray(
-                    values[cwt_start:cwt_end],
-                    dtype=np.float64,
-                )
-                working_segment = raw_segment - baseline
+                segment_start = cwt_start - read_start
+                cwt_segment = raw_chunk[
+                    segment_start:segment_start + cwt_end - cwt_start
+                ]
+                working_segment = cwt_segment - baseline
                 if direction == "down":
                     working_segment = -working_segment
                 segment = working_segment[::downsample_factor]
@@ -119,10 +140,13 @@ def detect_peaks_cwt(
                         Peak(
                             index=global_candidate,
                             time=float(global_candidate / sample_rate),
-                            amplitude=float(values[global_candidate]),
+                            amplitude=float(cwt_segment[global_candidate - cwt_start]),
                             prominence=float(prominence),
                             polarity=direction,
                         )
                     )
+            completed_chunks += 1
+            if progress_callback is not None:
+                progress_callback(completed_chunks, total_chunks)
 
     return sorted(detected, key=lambda peak: (peak.index, peak.polarity))

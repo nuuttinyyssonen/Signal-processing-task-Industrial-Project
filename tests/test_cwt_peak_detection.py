@@ -44,6 +44,49 @@ def test_detect_peaks_cwt_finds_positive_and_negative_pulses_in_chunks(tmp_path)
     assert peaks[1].polarity == "down"
 
 
+def test_peak_detection_uses_processed_signal_values():
+    sample_rate = 1_000
+    samples = np.arange(600)
+    signal = 100 + 50 * np.exp(-0.5 * ((samples - 180) / 10) ** 2)
+
+    raw_peaks = detect_peaks_cwt(
+        signal,
+        sample_rate,
+        widths=range(4, 17, 2),
+        min_prominence=5,
+        min_distance_s=0.1,
+        min_height=5,
+        chunk_size=200,
+    )
+    processed_chunks = []
+    progress = []
+
+    def process_chunk(start, end):
+        processed_chunks.append((start, end))
+        return signal[start:end] - 100
+
+    processed_peaks = detect_peaks_cwt(
+        signal,
+        sample_rate,
+        widths=range(4, 17, 2),
+        min_prominence=5,
+        min_distance_s=0.1,
+        min_height=5,
+        chunk_size=200,
+        signal_processor=process_chunk,
+        progress_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
+
+    assert len(raw_peaks) == len(processed_peaks) == 1
+    assert abs(raw_peaks[0].index - processed_peaks[0].index) <= 1
+    assert raw_peaks[0].amplitude > 140
+    assert 45 < processed_peaks[0].amplitude < 55
+    assert len(processed_chunks) == 3
+    assert progress == [(1, 3), (2, 3), (3, 3)]
+
+
 def test_example15peaks_cwt_reports_detected_peak_count():
     if not DATA_PATH.exists():
         pytest.skip("data/example15peaks.csv not found")

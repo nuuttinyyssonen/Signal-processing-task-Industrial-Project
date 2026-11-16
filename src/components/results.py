@@ -37,14 +37,34 @@ class ResultsPanel(ctk.CTkFrame):
         summary.grid(row=0, column=0, sticky="w", padx=12, pady=12)
 
         section_label(summary, "PEAKS DETECTED").pack(fill="x", padx=14, pady=(10, 0))
+        count_row = ctk.CTkFrame(summary, fg_color="transparent")
+        count_row.pack(fill="x", padx=14)
         self.peak_count_label = ctk.CTkLabel(
-            summary,
+            count_row,
             text="0",
             font=ctk.CTkFont(size=48, weight="bold"),
             text_color=TEAL,
             anchor="w",
         )
-        self.peak_count_label.pack(fill="x", padx=14)
+        self.peak_count_label.pack(side="left")
+        self.detection_progress_frame = ctk.CTkFrame(
+            count_row, fg_color="transparent"
+        )
+        self.detection_status_label = ctk.CTkLabel(
+            self.detection_progress_frame,
+            text="Detecting peaks...",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=TEAL,
+            anchor="w",
+        )
+        self.detection_status_label.pack(fill="x")
+        self.detection_progress_bar = ctk.CTkProgressBar(
+            self.detection_progress_frame,
+            width=120,
+            height=8,
+            progress_color=TEAL,
+        )
+        self.detection_progress_bar.pack(fill="x", pady=(3, 0))
         small_label(summary, "in the selected signal").pack(fill="x", padx=14)
         self.artifact_label = ctk.CTkLabel(
             summary,
@@ -101,3 +121,21 @@ class ResultsPanel(ctk.CTkFrame):
                     text_color=TEXT,
                     anchor="w",
                 ).grid(row=r, column=col, sticky="w", padx=4, pady=2)
+
+    def start_peak_detection(self):
+        self.detection_progress_bar.configure(mode="indeterminate")
+        self.detection_progress_bar.start()
+        self.detection_status_label.configure(text="Detecting peaks...")
+        self.detection_progress_frame.pack(side="right", padx=(8, 0))
+
+    def update_peak_detection_progress(self, percent):
+        self.detection_progress_bar.stop()
+        self.detection_progress_bar.configure(mode="determinate")
+        self.detection_progress_bar.set(percent / 100)
+        self.detection_status_label.configure(
+            text=f"Detecting peaks... {percent}%"
+        )
+
+    def finish_peak_detection(self):
+        self.detection_progress_bar.stop()
+        self.detection_progress_frame.pack_forget()
