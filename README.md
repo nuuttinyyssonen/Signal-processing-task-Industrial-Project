@@ -12,8 +12,30 @@ The data is not stored in the repo (the `data/` folder is gitignored). To run th
 
  !!! ADDED customtkinter to dependencies !!!
 
- ## Running the application
- `python src/main.py`
+## Running the application
+`python src/main.py`
+
+## Building a macOS application archive
+
+The PyInstaller spec builds an Apple silicon `.app` bundle without including signal data. From the repository root, install the build dependency and create the app and submission archive:
+
+```
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --noconfirm --clean \
+  --distpath /tmp/signal-viewer-dist \
+  --workpath /tmp/signal-viewer-build \
+  SignalViewer.spec
+mkdir -p /tmp/signal-viewer-submission dist
+cp -R "/tmp/signal-viewer-dist/Signal Viewer.app" /tmp/signal-viewer-submission/
+cp packaging/README-macos.txt /tmp/signal-viewer-submission/README.txt
+ditto -c -k --norsrc --noextattr --noacl --keepParent \
+  /tmp/signal-viewer-submission /tmp/Signal-Viewer-macos-arm64.zip
+cp /tmp/Signal-Viewer-macos-arm64.zip dist/
+```
+
+The archive is `dist/Signal-Viewer-macos-arm64.zip`. Builds are platform-specific; this command creates an Apple silicon macOS app and is not a Windows or Intel Mac build. The app is ad-hoc signed but not Developer ID signed or notarized, so macOS may require approval in Privacy & Security on first launch.
+
+CSV conversions are cached in `~/Library/Caches/SignalViewer/converted` on macOS, so the app does not need write access beside the selected source file.
 
 ## Data conversion
 
