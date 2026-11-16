@@ -37,6 +37,25 @@ The archive is `dist/Signal-Viewer-macos-arm64.zip`. Builds are platform-specifi
 
 CSV conversions are cached in `~/Library/Caches/SignalViewer/converted` on macOS, so the app does not need write access beside the selected source file.
 
+## Building a Windows application archive
+
+Build the 64-bit Windows application on Windows from the repository root. PyInstaller builds are platform-specific; this does not create a macOS app. In PowerShell:
+
+```powershell
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --noconfirm --clean `
+  --distpath build\windows-dist `
+  --workpath build\windows-work `
+  SignalViewer-windows.spec
+New-Item -ItemType Directory -Force build\windows-submission, dist | Out-Null
+Copy-Item -Recurse -Force "build\windows-dist\Signal Viewer" build\windows-submission
+Copy-Item packaging\README-windows.txt build\windows-submission\README.txt
+Compress-Archive -Path build\windows-submission\* `
+  -DestinationPath dist\Signal-Viewer-windows-x64.zip -Force
+```
+
+The archive is `dist/Signal-Viewer-windows-x64.zip`. Extract it and run `Signal Viewer\Signal Viewer.exe`. The archive contains the application and its runtime files, but no signal data. CSV conversions are cached in `%LOCALAPPDATA%\SignalViewer\converted`.
+
 ## Data conversion
 
 `src/convert.py` reads the large signal CSV (columns `adc1,adc2`) in chunks, so the whole file is never loaded into memory, and writes the samples to a compact binary file (`signal.u16`, 2-byte unsigned integers, adc1 and adc2 interleaved) plus a `meta.json` with the sample count and sample rate.
