@@ -6,6 +6,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 import os
 import json
+import threading
 
 from baseline import remove_baseline
 from cwt_peak_detection import Peak
@@ -33,6 +34,9 @@ class PlotsPanel(ctk.CTkFrame):
         self.initial_window_seconds = 1.0
         self.overview_time_data = None
         self.overview_signal_data = None
+        self._overview_generation = 0
+        self._overview_cancel = None
+        self._overview_ready_callback = None
         
         # Pääkehys kuvaajalle
         plot_frame = ctk.CTkFrame(self, corner_radius=6)
@@ -141,13 +145,23 @@ class PlotsPanel(ctk.CTkFrame):
             self._sync_overview_selection()
             self.canvas.draw()
 
-    def load_and_plot_binary(self, output_dir="data/example_out", channel="sensor2"):
+    def load_and_plot_binary(
+        self,
+        output_dir="data/example_out",
+        channel="sensor2",
+        on_overview_ready=None,
+    ):
         """Lataa binääridatan, laskee loogisen aika-akselin ja piirtää kuvaajan"""
+        if self._overview_cancel is not None:
+            self._overview_cancel.set()
+        self._overview_generation += 1
+        self._overview_ready_callback = None
         meta_path = os.path.join(output_dir, "meta.json")
 
         if not os.path.exists(meta_path):
-            print(f"Binääritiedostoja ei löydy polusta {output_dir}. Aja ensin convert.py!")
-            return
+            raise FileNotFoundError(
+                f"Signal metadata not found in {output_dir}; convert the file first."
+            )
 
         with open(meta_path, "r") as f:
             meta = json.load(f)
@@ -161,8 +175,7 @@ class PlotsPanel(ctk.CTkFrame):
         else:
             raise ValueError(f"Unsupported signal dtype: {dtype}")
         if not os.path.exists(signal_path):
-            print(f"Binääritiedostoja ei löydy polusta {output_dir}. Aja ensin convert.py!")
-            return
+            raise FileNotFoundError(f"Signal data not found: {signal_path}")
 
         channel_count = len(meta.get("channels", ["adc1", "adc2"]))
         if sample_rate <= 0 or channel_count <= 0:
@@ -189,6 +202,7 @@ class PlotsPanel(ctk.CTkFrame):
         self.signal_data = mapped_data[:, channel_index]
         self.sample_rate = sample_rate
         self.detected_peaks = []
+        self._overview_ready_callback = on_overview_ready
 
         self._build_overview()
         self.reset_view()
@@ -221,7 +235,7 @@ class PlotsPanel(ctk.CTkFrame):
     def set_detected_peaks(self, peaks):
         self.detected_peaks = list(peaks)
         if self.signal_data is not None:
-            self._build_overview()
+            self._render_overview()
             self.update_plot()
 
     def _peak_display_values(self):
@@ -259,23 +273,89 @@ class PlotsPanel(ctk.CTkFrame):
             )
 
     def _build_overview(self):
-        """Build a bounded min/max overview from raw or processed mapped data."""
+        """Build the overview off the UI thread and render it when ready."""
         if self.signal_data is None:
             return
 
+        if self._overview_cancel is not None:
+            self._overview_cancel.set()
+        cancel_event = threading.Event()
+        self._overview_cancel = cancel_event
+        self._overview_generation += 1
+        generation = self._overview_generation
         bucket_count = min(self.overview_bucket_count, self.sample_count)
-        if self.remove_baseline_enabled or self.smoothing_enabled:
-            overview_indices, overview_values = self._processed_min_max(
-                0,
-                self.sample_count,
-                bucket_count,
-            )
-        else:
-            overview_indices = self._min_max_indices(0, self.sample_count, bucket_count)
-            overview_values = self.signal_data[overview_indices]
+        signal_data = self.signal_data
+        sample_count = self.sample_count
+        sample_rate = self.sample_rate
+        remove_baseline = self.remove_baseline_enabled
+        smoothing = self.smoothing_enabled
 
-        self.overview_time_data = overview_indices / self.sample_rate
-        self.overview_signal_data = overview_values
+        self.selection_patch = None
+        self.overview_time_data = None
+        self.overview_signal_data = None
+        self.ax_overview.clear()
+        self.ax_overview.set_title("Building overview...", color="white", fontsize=8)
+        self.canvas.draw_idle()
+
+        def build():
+            try:
+                result = self._compute_overview_data(
+                    signal_data,
+                    sample_count,
+                    sample_rate,
+                    bucket_count,
+                    remove_baseline,
+                    smoothing,
+                    cancel_event,
+                )
+            except Exception as error:
+                self.after(
+                    0,
+                    lambda error=error: self._finish_overview(
+                        generation, error=error
+                    ),
+                )
+                return
+
+            if result is not None and not cancel_event.is_set():
+                self.after(
+                    0,
+                    lambda result=result: self._finish_overview(
+                        generation, result=result
+                    ),
+                )
+
+        threading.Thread(target=build, daemon=True).start()
+
+    def _finish_overview(self, generation, result=None, error=None):
+        if generation != self._overview_generation:
+            return
+        if error is not None:
+            self.overview_error_label.configure(text=f"Overview failed: {error}")
+            self.overview_error_label.pack(fill="x", padx=10)
+            self._notify_overview_ready(error)
+            return
+        if result is None:
+            return
+
+        indices, values = result
+        self.overview_time_data = indices / self.sample_rate
+        self.overview_signal_data = values
+        self.overview_error_label.pack_forget()
+        self._render_overview()
+        self.canvas.draw_idle()
+        self._notify_overview_ready()
+
+    def _notify_overview_ready(self, error=None):
+        callback = self._overview_ready_callback
+        self._overview_ready_callback = None
+        if callback is not None:
+            callback(error)
+
+    def _render_overview(self):
+        """Render the already-computed overview data and current peak markers."""
+        if self.overview_time_data is None or self.overview_signal_data is None:
+            return
 
         self.selection_patch = None
         self.ax_overview.clear()
@@ -305,6 +385,44 @@ class PlotsPanel(ctk.CTkFrame):
         self.ax_overview.set_xlim(0, self._duration())
         self.ax_overview.margins(x=0)
         self._sync_overview_selection()
+
+    @classmethod
+    def _compute_overview_data(
+        cls,
+        signal_data,
+        sample_count,
+        sample_rate,
+        bucket_count,
+        remove_baseline,
+        smoothing,
+        cancel_event=None,
+    ):
+        """Compute overview extrema without touching Tk or Matplotlib state."""
+        if remove_baseline or smoothing:
+            return cls._processed_min_max_data(
+                signal_data,
+                sample_count,
+                sample_rate,
+                0,
+                sample_count,
+                bucket_count,
+                remove_baseline,
+                smoothing,
+                cancel_event,
+            )
+
+        boundaries = np.linspace(0, sample_count, bucket_count + 1, dtype=int)
+        indices = np.empty(bucket_count * 2, dtype=np.intp)
+        for bucket_index, (start, end) in enumerate(
+            zip(boundaries[:-1], boundaries[1:])
+        ):
+            if cancel_event is not None and cancel_event.is_set():
+                return None
+            bucket = signal_data[start:end]
+            indices[2 * bucket_index] = start + int(np.argmin(bucket))
+            indices[2 * bucket_index + 1] = start + int(np.argmax(bucket))
+        indices = np.unique(indices)
+        return indices, np.asarray(signal_data[indices])
 
     def _min_max_indices(self, start, end, bucket_count):
         if bucket_count == end - start:
@@ -348,6 +466,30 @@ class PlotsPanel(ctk.CTkFrame):
 
     def _processed_min_max(self, start, end, bucket_count):
         """Process mapped samples in bounded chunks and keep each bucket's extrema."""
+        return self._processed_min_max_data(
+            self.signal_data,
+            self.sample_count,
+            self.sample_rate,
+            start,
+            end,
+            bucket_count,
+            self.remove_baseline_enabled,
+            self.smoothing_enabled,
+        )
+
+    @classmethod
+    def _processed_min_max_data(
+        cls,
+        signal_data,
+        sample_count,
+        sample_rate,
+        start,
+        end,
+        bucket_count,
+        remove_baseline,
+        smoothing,
+        cancel_event=None,
+    ):
         boundaries = np.linspace(start, end, bucket_count + 1, dtype=int)
         min_values = np.full(bucket_count, np.inf)
         max_values = np.full(bucket_count, -np.inf)
@@ -356,8 +498,18 @@ class PlotsPanel(ctk.CTkFrame):
         chunk_size = 250_000
 
         for chunk_start in range(start, end, chunk_size):
+            if cancel_event is not None and cancel_event.is_set():
+                return None
             chunk_end = min(chunk_start + chunk_size, end)
-            processed = self._process_chunk(chunk_start, chunk_end)
+            processed = cls._process_signal_chunk(
+                signal_data,
+                sample_count,
+                sample_rate,
+                remove_baseline,
+                smoothing,
+                chunk_start,
+                chunk_end,
+            )
             first_bucket = max(
                 0,
                 int(np.searchsorted(boundaries, chunk_start, side="right") - 1)
@@ -390,6 +542,38 @@ class PlotsPanel(ctk.CTkFrame):
         values = values[order]
         keep = np.concatenate(([True], indices[1:] != indices[:-1]))
         return indices[keep], values[keep]
+
+    @staticmethod
+    def _process_signal_chunk(
+        signal_data,
+        sample_count,
+        sample_rate,
+        baseline_enabled,
+        smoothing,
+        start,
+        end,
+    ):
+        baseline_left = 0
+        baseline_right = 0
+        if baseline_enabled:
+            baseline_window = max(1, int(0.3 * sample_rate))
+            baseline_left = baseline_window // 2
+            baseline_right = baseline_window - baseline_left - 1
+
+        smoothing_radius = (
+            int(4 * 0.00004 * sample_rate + 0.5) if smoothing else 0
+        )
+        read_start = max(0, start - baseline_left - smoothing_radius)
+        read_end = min(sample_count, end + baseline_right + smoothing_radius)
+        chunk = np.asarray(signal_data[read_start:read_end], dtype=np.float64)
+
+        if baseline_enabled:
+            chunk, _ = remove_baseline(chunk, sample_rate)
+        if smoothing:
+            chunk = smooth_gaussian(chunk, sigma_s=0.00004, fs=sample_rate)
+
+        trim_start = start - read_start
+        return chunk[trim_start:trim_start + end - start]
 
     def _sync_overview_selection(self):
         """Korostaa pääikkunan alueen yleiskuvan alla."""

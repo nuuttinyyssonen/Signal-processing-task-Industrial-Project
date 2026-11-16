@@ -86,12 +86,16 @@ class main(ctk.CTk):
         """Tiedosto valittu: .u16 piirretään suoraan, .csv konvertoidaan ensin."""
     
         if path.suffix in (".u16", ".f32"):
-            self.plots.load_and_plot_binary(
-                str(path.parent),
-                channel=self.controls.channel_var.get(),
-            )
-            self.file_loader.status_label.configure(text="Ready")
-            self.on_controls_changed()
+            self.file_loader.status_label.configure(text="Loading overview…")
+            try:
+                self.plots.load_and_plot_binary(
+                    str(path.parent),
+                    channel=self.controls.channel_var.get(),
+                    on_overview_ready=self._file_overview_ready,
+                )
+                self.on_controls_changed()
+            except Exception as error:
+                self.file_loader.status_label.configure(text=f"Load failed: {error}")
             return
 
        
@@ -101,19 +105,42 @@ class main(ctk.CTk):
         self.file_loader.progress.start()
 
         def convert():
-            convert_csv(str(path), str(out_dir))
+            try:
+                convert_csv(str(path), str(out_dir))
+            except Exception as error:
+                self.after(
+                    0,
+                    lambda error=error: self._conversion_failed(error),
+                )
+                return
 
             def done():
-                self.file_loader.status_label.configure(text="Ready")
                 self.file_loader.progress.stop()
-                self.plots.load_and_plot_binary(
-                    str(out_dir),
-                    channel=self.controls.channel_var.get(),
-                )
-                self.on_controls_changed()
+                self.file_loader.status_label.configure(text="Loading overview…")
+                try:
+                    self.plots.load_and_plot_binary(
+                        str(out_dir),
+                        channel=self.controls.channel_var.get(),
+                        on_overview_ready=self._file_overview_ready,
+                    )
+                    self.on_controls_changed()
+                except Exception as error:
+                    self.file_loader.status_label.configure(
+                        text=f"Load failed: {error}"
+                    )
 
             self.after(0, done)
         threading.Thread(target=convert, daemon=True).start()
+
+    def _conversion_failed(self, error):
+        self.file_loader.progress.stop()
+        self.file_loader.status_label.configure(text=f"Conversion failed: {error}")
+
+    def _file_overview_ready(self, error=None):
+        if error is None:
+            self.file_loader.status_label.configure(text="Ready")
+        else:
+            self.file_loader.status_label.configure(text=f"Load failed: {error}")
   
     # ------------------------------------------------------------ tapahtumat
     def on_controls_changed(self):
