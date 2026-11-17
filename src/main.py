@@ -1,9 +1,11 @@
 import threading
+from queue import Empty, Queue
 from pathlib import Path
+from tkinter import messagebox
 
 import customtkinter as ctk
 
-from convert import convert_csv
+from convert import convert_csv, conversion_cache_dir
 from cwt_peak_detection import detect_peaks_cwt
 
 from components.controls import ControlsPanel
@@ -26,6 +28,7 @@ class main(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self._peak_detection_generation = 0
         self._peak_detection_cancel = None
+        self._ui_events = Queue()
 
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
@@ -64,17 +67,21 @@ class main(ctk.CTk):
         self.plots = PlotsPanel(main_frame)
         self.plots.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
 
-        # 👉 Ladataan konvertoitu binääridata automaattisesti kuvaajaan käynnistyksessä
         try:
             self.plots.load_and_plot_binary(
                 "data/example_out",
                 channel=self.controls.get_settings()["channel"],
             )
-        except Exception as e:
-            print(f"Automaattinen datan lataus epäonnistui (ajoithan convert.py?): {e}")
+        except FileNotFoundError:
+            self.file_loader.status_label.configure(text="Choose a signal file")
+        except Exception as error:
+            self.file_loader.status_label.configure(
+                text=f"Startup load failed: {error}"
+            )
 
         self.results = ResultsPanel(main_frame)
         self.results.grid(row=1, column=0, sticky="nsew")
+        self.after(100, self._process_ui_events)
 
     def on_closing(self):
         if self._peak_detection_cancel is not None:
@@ -98,52 +105,91 @@ class main(ctk.CTk):
                 )
                 self.on_controls_changed()
             except Exception as error:
-                self.file_loader.status_label.configure(text=f"Load failed: {error}")
+                self._file_load_failed(error)
             return
 
        
-        out_dir = path.with_suffix("")
+        try:
+            out_dir = conversion_cache_dir(path)
+        except Exception as error:
+            self._conversion_failed(f"{type(error).__name__}: {error}")
+            return
         self.file_loader.status_label.configure(text="Converting…")
+        self.file_loader.file_info_label.configure(text="Preparing CSV conversion…")
         self.file_loader.progress.configure(mode="indeterminate")
         self.file_loader.progress.start()
 
         def convert():
             try:
-                convert_csv(str(path), str(out_dir))
+                convert_csv(
+                    str(path),
+                    str(out_dir),
+                    progress_callback=lambda rows, elapsed: self._ui_events.put(
+                        ("conversion_progress", rows, elapsed)
+                    ),
+                )
             except Exception as error:
-                self.after(
-                    0,
-                    lambda error=error: self._conversion_failed(error),
+                self._ui_events.put(
+                    ("conversion_failed", f"{type(error).__name__}: {error}")
                 )
                 return
 
-            def done():
-                self.file_loader.progress.stop()
-                self.file_loader.status_label.configure(text="Loading overview…")
-                try:
-                    self.plots.load_and_plot_binary(
-                        str(out_dir),
-                        channel=self.controls.channel_var.get(),
-                        on_overview_ready=self._file_overview_ready,
-                    )
-                    self.on_controls_changed()
-                except Exception as error:
-                    self.file_loader.status_label.configure(
-                        text=f"Load failed: {error}"
-                    )
+            self._ui_events.put(("conversion_complete", str(out_dir)))
 
-            self.after(0, done)
         threading.Thread(target=convert, daemon=True).start()
+
+    def _process_ui_events(self):
+        while True:
+            try:
+                event = self._ui_events.get_nowait()
+            except Empty:
+                break
+
+            event_type = event[0]
+            if event_type == "conversion_progress":
+                _, rows, elapsed = event
+                self.file_loader.file_info_label.configure(
+                    text=f"Converted {rows:,} rows ({elapsed:.0f} s)"
+                )
+            elif event_type == "conversion_failed":
+                self._conversion_failed(event[1])
+            elif event_type == "conversion_complete":
+                self._conversion_complete(event[1])
+
+        self.after(100, self._process_ui_events)
 
     def _conversion_failed(self, error):
         self.file_loader.progress.stop()
-        self.file_loader.status_label.configure(text=f"Conversion failed: {error}")
+        self.file_loader.status_label.configure(text="Conversion failed")
+        self.file_loader.file_info_label.configure(text=error)
+        messagebox.showerror("CSV conversion failed", error, parent=self)
+
+    def _conversion_complete(self, output_dir):
+        self.file_loader.progress.stop()
+        self.file_loader.status_label.configure(text="Loading overview…")
+        self.file_loader.file_info_label.configure(
+            text="CSV converted; building signal overview…"
+        )
+        try:
+            self.plots.load_and_plot_binary(
+                output_dir,
+                channel=self.controls.channel_var.get(),
+                on_overview_ready=self._file_overview_ready,
+            )
+            self.on_controls_changed()
+        except Exception as error:
+            self._file_load_failed(error)
+
+    def _file_load_failed(self, error):
+        self.file_loader.status_label.configure(text="Load failed")
+        self.file_loader.file_info_label.configure(text=str(error))
+        messagebox.showerror("Signal load failed", str(error), parent=self)
 
     def _file_overview_ready(self, error=None):
         if error is None:
             self.file_loader.status_label.configure(text="Ready")
         else:
-            self.file_loader.status_label.configure(text=f"Load failed: {error}")
+            self._file_load_failed(error)
   
     # ------------------------------------------------------------ tapahtumat
     def on_controls_changed(self):
